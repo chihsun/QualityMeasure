@@ -246,7 +246,7 @@ namespace QualityMeasure
                             continue;
                         if (!DateTime.TryParse(ws.Cell(1, j + 2).GetString(), CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime dts))
                             continue;
-                        if (dts > DateTime.Now.AddMonths(-13) && dts < DateTime.Now)
+                        if (dts > DateTime.Now.AddMonths(-1 - 12) && dts < DateTime.Now)
                         {
                             if (duplicate.Contains(dts.ToString("yyyy/MM")))
                                 continue;
@@ -290,9 +290,131 @@ namespace QualityMeasure
             }
         }
 
-            private void BT_TO_EXPORT_CLINIC(object sender, RoutedEventArgs e)
+        private void BT_TO_EXPORT_CLINIC(object sender, RoutedEventArgs e)
         {
+            if (gdata.Count <= 0)
+            {
+                MessageBox.Show("尚未匯入指標清單");
+                return;
+            }
+            if (!Directory.Exists(System.Environment.CurrentDirectory + @"\資料收集"))
+            {
+                Directory.CreateDirectory(System.Environment.CurrentDirectory + @"\資料收集");
+            }
+            ///
+            /// 匯出時濾掉名稱不同但相同數值的要素
+            ///
+            var newda = gdata;
+            newda.Sort((x, y) => { return x.MeasureName.CompareTo(y.MeasureName); });
+            var newdata = newda.GroupBy(o => o.Depart)
+                    .ToDictionary(o => o.Key, o => o.ToList());
 
+            var unitcounts = gdata.Where(o => !SameEle.Contains(o.MeasureID))
+                .GroupBy(o => o.Depart)
+                .ToDictionary(o => o.Key, o => o.ToList().Count);
+            TxtBox1.Text += Environment.NewLine + "指標收集單位數 : " + unitcounts.Count +
+                Environment.NewLine + string.Join(",", unitcounts) + Environment.NewLine;
+            try
+            {
+                foreach (var x in newdata)
+                {
+                    using (var wb = new XLWorkbook())
+                    {
+                        wb.Properties.Author = "TTMHH's QMC";
+                        wb.Properties.Status = "Measurement";
+                        wb.Properties.Title = "Measurement File";
+                        wb.Properties.Comments = "Measurement File";
+
+                        var ws = wb.Worksheets.Add("指標提報");
+                        ws.Style.Font.FontSize = 12;
+                        ws.Style.Font.FontName = "微軟正黑體";
+
+                        var wscol = ws.Columns("A:D");
+                        wscol.Width = 15;
+                        wscol.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+                        wscol.Style.Alignment.Vertical = XLAlignmentVerticalValues.Center;
+                        wscol.Style.Alignment.WrapText = true;
+                        ws.Column(1).Width = 15;
+                        ws.Column(2).Width = 10;
+                        ws.Column(3).Width = 25;
+                        ws.Column(4).Width = 45;
+                        ws.Column(5).Width = 10;
+
+                        ws.Cells("A1:D1").Style.Fill.BackgroundColor = XLColor.LightBlue;
+                        ws.Cell(1, 1).Value = "指標群組";
+                        ws.Cell(1, 2).Value = "監測單位";
+                        ws.Cell(1, 3).Value = "指標要素";
+                        ws.Cell(1, 4).Value = "指標(要素)名稱";
+                        for (int i = 0; i < 6; i++)
+                        {
+                            ws.Cell(1, i + 5).Value = DateTime.Now.AddMonths(-1 - i).ToString("yyyy/MM");
+                            ws.Cell(1, i + 5).Style.DateFormat.Format = "yyyy/MM";
+                            ws.Cell(1, i + 5).Style.Fill.BackgroundColor = XLColor.LightBlue;
+                            ws.Cell(1, i + 5).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+                            ws.Column(i + 5).AdjustToContents();
+                        }
+
+                        int index = 2;
+                        for (int i = 0; i < x.Value.Count; i++)
+                        {
+                            if (SameEle.Count > 0 && SameEle.Contains(x.Value[i].MeasureID))
+                            {
+                                continue;
+                            }
+                            ws.Cell(index, 1).Value = x.Value[i].Group;
+                            ws.Cell(index, 2).Value = x.Value[i].Depart;
+                            ws.Cell(index, 3).Value = x.Value[i].MeasureID;
+                            ws.Cell(index, 4).Value = x.Value[i].MeasureName;
+
+                            ws.Cell(index, 5).Style.Protection.SetLocked(false);
+                            ws.Cell(index, 5).Style.Fill.BackgroundColor = XLColor.LightCyan;
+                            ws.Cell(index, 5).Style.Font.FontSize = 13;
+                            ws.Cell(index, 5).Style.Font.FontColor = XLColor.DarkMagenta;
+                            ws.Cell(index, 5).Style.Font.Bold = true;
+                            ws.Cell(index, 5).Style.Border.RightBorder = XLBorderStyleValues.Thin;
+                            ws.Cell(index, 5).Style.Border.RightBorderColor = XLColor.LightGray;
+                            ws.Cell(index, 5).Style.Border.LeftBorder = XLBorderStyleValues.Thin;
+                            ws.Cell(index, 5).Style.Border.LeftBorderColor = XLColor.LightGray;
+                            ws.Cell(index, 5).Style.Border.TopBorder = XLBorderStyleValues.Thin;
+                            ws.Cell(index, 5).Style.Border.TopBorderColor = XLColor.LightGray;
+                            ws.Cell(index, 5).Style.Border.BottomBorder = XLBorderStyleValues.Thin;
+                            ws.Cell(index, 5).Style.Border.BottomBorderColor = XLColor.LightGray;
+
+                            if (gbackups.Count > 0 && gbackups.ContainsKey(x.Value[i].MeasureID))
+                            {
+                                for (int j = 2; j < 7; j++)
+                                {
+                                    var data = gbackups[x.Value[i].MeasureID].Find(o => o.Eledate.Month == DateTime.Now.AddMonths(-j).Month
+                                    && o.Eledate.Year == DateTime.Now.AddMonths(-j).Year);
+                                    if (data == null)
+                                        continue;
+
+                                    ws.Cell(index, j + 4).Value = data.ElementData;
+                                }
+                            }
+                            index++;
+                        }
+                        ws.Protect()
+                            .SetInsertColumns(false)
+                            .SetDeleteColumns(false)
+                            .SetInsertRows(false)
+                            .SetDeleteRows(false)
+                            .SetFormatCells(true)
+                            .SetSelectLockedCells(false)
+                            .SetSelectUnlockedCells(true);
+
+                        string Refile = System.Environment.CurrentDirectory + @"\資料收集\" + x.Key + ".xlsx";
+                        wb.SaveAs(Refile);
+                        wb.Dispose();
+                    }
+                }
+
+                MessageBox.Show("轉出成功 : " + newdata.Count);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(ex.ToString());
+            }
         }
 
         private void BT_IMPORT_RESULT(object sender, RoutedEventArgs e)
@@ -405,7 +527,7 @@ namespace QualityMeasure
             {
                 Directory.CreateDirectory(fpath);
             }
-            string fname = @"\指標數據總資料" + DateTime.Now.AddMonths(-1).ToString("yyyy-M", CultureInfo.InvariantCulture) + ".xlsx";
+            string fname = @"\指標數據總資料" + DateTime.Now.AddMonths(-1).ToString("yyyy-MM", CultureInfo.InvariantCulture) + ".xlsx";
 
             var sortbacks = gbackups.OrderBy(o => o.Key).ToDictionary(o => o.Key, p => p.Value.OrderByDescending(o => o.ElementData).ToList());
             try
@@ -444,16 +566,18 @@ namespace QualityMeasure
                         ws.Range(index, 1, index + 2, 1).Merge();
                         ws.Range(index, 2, index + 2, 2).Merge();
                         ws.Range(index, 3, index + 2, 3).Merge();
-                        int status = 0;
-                        var Numes = sortbacks.FirstOrDefault(o => o.Key == x.Numerator).Value;
+                        int Destatus = 0;
+                        int Nustatus = 0;
 
                         List<List<MElements>> DenosPlus = new List<List<MElements>>();
+                        List<List<MElements>> NumePlus = new List<List<MElements>>();
 
+                        var Numes = sortbacks.FirstOrDefault(o => o.Key == x.Numerator).Value;
                         var Denos = sortbacks.FirstOrDefault(o => o.Key == x.Denominator).Value;
 
                         if (x.Denominator.Contains("+"))
                         {
-                            status = 1;
+                            Destatus = 1;
                             var elements = x.Denominator.Split('+').ToList();
                             if (elements.Count > 0)
                             {
@@ -467,7 +591,7 @@ namespace QualityMeasure
                         }
                         else if (x.Denominator.Contains(".") && x.Denominator.Contains("-"))
                         {
-                            status = 2;
+                            Destatus = 2;
                             var elements = x.Denominator.Split('-').ToList();
                             if (elements.Count > 0)
                             {
@@ -476,6 +600,34 @@ namespace QualityMeasure
                                     var em = sortbacks.FirstOrDefault(o => o.Key == ele).Value;
                                     if (em != null)
                                         DenosPlus.Add(em);
+                                }
+                            }
+                        }
+                        if (x.Numerator.Contains("+"))
+                        {
+                            Nustatus = 1;
+                            var elements = x.Numerator.Split('+').ToList();
+                            if (elements.Count > 0)
+                            {
+                                foreach (var ele in elements)
+                                {
+                                    var em = sortbacks.FirstOrDefault(o => o.Key == ele).Value;
+                                    if (em != null)
+                                        NumePlus.Add(em);
+                                }
+                            }
+                        }
+                        else if (x.Numerator.Contains(".") && x.Numerator.Contains("-"))
+                        {
+                            Nustatus = 2;
+                            var elements = x.Numerator.Split('-').ToList();
+                            if (elements.Count > 0)
+                            {
+                                foreach (var ele in elements)
+                                {
+                                    var em = sortbacks.FirstOrDefault(o => o.Key == ele).Value;
+                                    if (em != null)
+                                        NumePlus.Add(em);
                                 }
                             }
                         }
@@ -492,6 +644,42 @@ namespace QualityMeasure
                                     int numok;
                                     if (int.TryParse(nume.ElementData, out numok))
                                         ws.Cell(index + 1, i + 4).Value = numok;
+                                }
+                            }
+                            else if (NumePlus.Count > 0)
+                            {
+                                try
+                                {
+                                    int deno = 0;
+                                    foreach (var ele in NumePlus)
+                                    {
+                                        var de = ele.FirstOrDefault(o => o.Eledate.Year == DateTime.Now.AddMonths(-i - 1).Year
+                                    && o.Eledate.Month == DateTime.Now.AddMonths(-i - 1).Month);
+                                        if (de == null)
+                                        {
+                                            break;
+                                        }
+                                        int num;
+                                        if (!Int32.TryParse(de.ElementData, out num))
+                                            break;
+                                        if (Nustatus == 1)
+                                        {
+                                            deno += num;
+                                        }
+                                        else if (Nustatus == 2)
+                                        {
+                                            if (deno == 0)
+                                                deno = num;
+                                            else
+                                                deno -= num;
+                                        }
+                                    }
+                                    if (deno > 0)
+                                        ws.Cell(index + 1, i + 4).Value = deno;
+                                }
+                                catch (Exception ex)
+                                {
+                                    MessageBox.Show(ex.ToString());
                                 }
                             }
 
@@ -524,11 +712,11 @@ namespace QualityMeasure
                                         int num;
                                         if (!Int32.TryParse(de.ElementData, out num))
                                             break;
-                                        if (status == 1)
+                                        if (Destatus == 1)
                                         {
                                             deno += num;
                                         }
-                                        else if (status == 2)
+                                        else if (Destatus == 2)
                                         {
                                             if (deno == 0)
                                                 deno = num;
@@ -551,7 +739,9 @@ namespace QualityMeasure
                                 if (double.TryParse(ws.Cell(index + 1, i + 4).GetString(), out nu)
                                     && double.TryParse(ws.Cell(index + 2, i + 4).GetString() == "NA" ? "1" : ws.Cell(index + 2, i + 4).GetString(), out de))
                                 {
-                                    if (de != 0)
+                                    if (nu == 0)
+                                        ws.Cell(index, i + 4).Value = nu;
+                                    else if (de != 0)
                                         ws.Cell(index, i + 4).Value = nu / de;
                                 }
                             }
