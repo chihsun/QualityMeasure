@@ -419,7 +419,211 @@ namespace QualityMeasure
 
         private void BT_IMPORT_RESULT(object sender, RoutedEventArgs e)
         {
+            gcollect.Clear();
 
+            List<string> duplicate = new List<string>();
+
+            string folderName = System.Environment.CurrentDirectory + @"\資料匯總";
+            try
+            {
+                foreach (var finame in System.IO.Directory.GetFileSystemEntries(folderName))
+                {
+                    if (System.IO.Path.GetExtension(finame) != ".xlsx")
+                        continue;
+                    using (var wb = new XLWorkbook())
+                    {
+                        var ws = wb.Worksheet(1);
+
+                        if (!DateTime.TryParse(ws.Cell(1, 5).GetString(), CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime time))
+                            continue;
+                        if (time.Year != DateTime.Now.AddMonths(-1).Year
+                            || time.Month != DateTime.Now.AddMonths(-1).Month)
+                            continue;
+                        for (int i = 2; i < 500; i++)
+                        {
+                            if (string.IsNullOrEmpty(ws.Cell(i, 1).GetString()))
+                                break;
+                            if (string.IsNullOrEmpty(ws.Cell(i, 3).GetString()))
+                                continue;
+                            MElements data = new MElements
+                            {
+                                Element = ws.Cell(i, 3).GetString().Trim(),
+                                ElementData = ws.Cell(i, 5).GetString().Trim(),
+                                Eledate = time
+                            };
+                            if (gcollect.Count > 0)
+                            {
+                                bool dup = false;
+                                foreach (var x in gcollect)
+                                {
+                                    if (data.Element == x.Element)
+                                    {
+                                        duplicate.Add(x.Element);
+                                        dup = true;
+                                        break;
+                                    }
+                                }
+                                if (!dup)
+                                    gcollect.Add(data);
+                            }
+                            else
+                                gcollect.Add(data);
+
+                            if (gduplicate.ContainsKey(data.Element))
+                            {
+                                var glists = gduplicate.Where(o => o.Key == data.Element).FirstOrDefault().Value;
+                                foreach (var x in glists)
+                                {
+                                    if (gcollect.Find(o => o.Element == x.ToString()) == null &&
+                                        gdata.Find(o => o.MeasureID == x.ToString()) != null)
+                                    {
+                                        MElements dupdata = new MElements
+                                        {
+                                            Element = x.ToString(),
+                                            ElementData = data.ElementData,
+                                            Eledate = data.Eledate
+                                        };
+                                        gcollect.Add(dupdata);
+                                    }
+                                }
+                            }
+                        }
+
+                        wb.Dispose();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(ex.Message);
+            }
+            MessageBox.Show("匯入成功 : " + gcollect.Count());
+
+            if (duplicate.Count > 0)
+            {
+                TxtBox1.Text += Environment.NewLine + "重複資料清單 : " + string.Join(",", duplicate) + Environment.NewLine;
+            }
+            if (gcollect.Count > 0)
+            {
+                TxtBox1.Text += Environment.NewLine + string.Format("指標收回數量 : {0}/{1} ({2}%)", gcollect.Count, gdata.Count, gcollect.Count * 100 / gdata.Count) +
+                    Environment.NewLine;
+
+                gcollect.Sort((x, y) => { return x.Element.CompareTo(y.Element); });
+
+                string fpath = Environment.CurrentDirectory + @"\要素備份";
+                if (!Directory.Exists(fpath))
+                {
+                    Directory.CreateDirectory(fpath);
+                }
+                string fname = @"\指標收集存檔(月份)" + DateTime.Now.AddMonths(-1).ToString("yyyy-MM") + ".xlsx";
+                string fname2 = @"\指標收集存檔總檔.xlsx";
+                try
+                {
+                    using (var wb = new XLWorkbook())
+                    {
+                        var ws = wb.Worksheets.Add("工作表1");
+                        ws.Style.Font.FontSize = 12;
+                        ws.Style.Font.FontName = "微軟正黑體";
+                        ws.Columns(1, 2).Width = 15;
+
+                        ws.Cell(1, 1).Value = "指標要素";
+                        ws.Cell(1, 2).Value = DateTime.Now.AddMonths(-1).ToString("yyyy/MM");
+                        ws.Cell(1, 2).Style.DateFormat.Format = "yyyy/MM";
+                        ws.Cell(1, 2).Style.Fill.BackgroundColor = XLColor.LightBlue;
+                        ws.Cell(1, 2).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+                        ws.Column(2).AdjustToContents();
+
+                        for (int i = 0; i < gcollect.Count; i++)
+                        {
+                            ws.Cell(i + 2, 1).Value = gcollect[i].Element;
+                            ws.Cell(i + 2, 2).Value = gcollect[i].ElementData;
+                        }
+
+                        wb.SaveAs(fpath + fname);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(ex.ToString());
+                }
+
+                if (!System.IO.File.Exists(fpath + fname))
+                    return;
+
+                if (!System.IO.File.Exists(fpath + fname2))
+                {
+                    using (var wb = new XLWorkbook(fpath + fname))
+                    {
+                        wb.SaveAs(fpath + fname2);
+                    }
+                }
+                else
+                {
+                    try
+                    {
+                        using (var wb = new XLWorkbook(fpath + fname2))
+                        {
+                            var ws = wb.Worksheet(1);
+
+                            if (!DateTime.TryParse(ws.Cell(1, 2).GetString(), CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime dts))
+                            {
+                                wb.Dispose();
+                                return;
+                            }
+                            if ((dts.Month == DateTime.Now.Month && dts.Year == DateTime.Now.Year) || dts >= DateTime.Now)
+                                return;
+                            if (dts.Month != DateTime.Now.AddMonths(-1).Month &&
+                                dts.Year != DateTime.Now.AddMonths(-1).Year)
+                            {
+                                ws.Column(1).InsertColumnsAfter(1);
+                                ws.Cell(1, 2).Value = DateTime.Now.AddMonths(-1).ToString("yyyy/MM");
+                            }
+                            
+                            foreach (var x in gcollect)
+                            {
+                                int wsrows = ws.LastRowUsed().RowNumber();
+                                
+                                var same = ws.RangeUsed().Rows(r => r.Cell(1).GetString() == x.Element).FirstOrDefault();
+
+                                if (same != null)
+                                {
+                                    same.Cell(2).Value = x.ElementData;
+                                }
+                                else
+                                {
+                                    ws.Cell(wsrows + 1, 1).Value = x.Element;
+                                    ws.Cell(wsrows + 1, 2).Value = x.ElementData;
+                                }
+                                /*
+                                bool oldele = false;
+                                for (int j = 0; j < 500; j++)
+                                {
+                                    if (string.IsNullOrEmpty(ws.Cell(j + 2, 1).GetString()))
+                                        break;
+                                    if (ws.Cell(j + 2, 1).GetString() == x.Element)
+                                    {
+                                        ws.Cell(j + 2, 2).Value = x.ElementData;
+                                        oldele = true;
+                                        break;
+                                    }
+                                }
+                                if (!oldele)
+                                {
+                                    ws.Cell(wsrows + 1, 1).Value = x.Element;
+                                    ws.Cell(wsrows + 1, 2).Value = x.ElementData;
+                                }
+                                */
+                            }
+
+                            wb.SaveAs(fpath + fname2);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show(ex.ToString());
+                    }
+                }
+            }
         }
 
         private void BT_IMPORT_OLDDATA(object sender, RoutedEventArgs e)
